@@ -9,12 +9,14 @@ public class Main {
 
         // Step 1: Write a page with some text in it
         try (PageStore store = new PageStore(filePath)) {
-            Page page = new Page();
-            byte[] message = "Hello from page 0!".getBytes(StandardCharsets.UTF_8);
-            page.getBuffer().put(message); // write bytes into the page
+            PageAllocator allocator = new PageAllocator(store);
+            long pageNum = allocator.allocatePage();
 
-            store.writePage(0, page);
-            System.out.println("Wrote page 0. Total pages: " + store.getPageCount());
+            Page page = new Page();
+            byte[] message = ("Hello from page " + pageNum + "!").getBytes(StandardCharsets.UTF_8);            page.getBuffer().put(message);
+
+            store.writePage((int) pageNum, page);
+            System.out.println("Wrote page " + pageNum + ". Total pages: " + store.getPageCount());
         }
 
         // Step 2: Reopen the file and read it back
