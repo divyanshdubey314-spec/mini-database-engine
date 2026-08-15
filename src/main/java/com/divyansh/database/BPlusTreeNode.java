@@ -5,7 +5,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 public class BPlusTreeNode {
-
+    public static final int MAX_KEYS = 100; // small-ish limit so splitting is testable
     public boolean isLeaf;
     public List<Integer> keys = new ArrayList<>();
 
@@ -77,4 +77,5 @@ public class BPlusTreeNode {
 
         return node;
     }
+
 }
