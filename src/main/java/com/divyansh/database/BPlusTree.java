@@ -149,4 +149,128 @@ public class BPlusTree {
         }
         return null;
     }
+    private static final int MIN_KEYS = BPlusTreeNode.MAX_KEYS / 2;
+
+    public void delete(int key) throws IOException {
+        if (rootPageNumber == -1) return;
+
+        deleteRecursive(rootPageNumber, key);
+
+        BPlusTreeNode root = BPlusTreeNode.fromPage(store.readPage((int) rootPageNumber));
+        if (!root.isLeaf && root.keys.isEmpty()) {
+            // Root became empty after a merge - its one remaining child becomes the new root
+            rootPageNumber = root.childPageNumbers.get(0);
+        }
+    }
+
+    // Returns true if this node underflowed (fewer than MIN_KEYS) after the delete
+    private boolean deleteRecursive(long pageNumber, int key) throws IOException {
+        BPlusTreeNode node = BPlusTreeNode.fromPage(store.readPage((int) pageNumber));
+
+        if (node.isLeaf) {
+            int idx = node.keys.indexOf(key);
+            if (idx == -1) return false; // key not found
+            node.keys.remove(idx);
+            node.recordPageNumbers.remove(idx);
+            node.slotIndexes.remove(idx);
+            store.writePage((int) pageNumber, node.toPage());
+            return node.keys.size() < MIN_KEYS && pageNumber != rootPageNumber;
+        }
+
+        int i = 0;
+        while (i < node.keys.size() && key >= node.keys.get(i)) i++;
+        long childPageNumber = node.childPageNumbers.get(i);
+
+        boolean childUnderflow = deleteRecursive(childPageNumber, key);
+        if (!childUnderflow) return false;
+
+        fixUnderflow(node, i);
+        store.writePage((int) pageNumber, node.toPage());
+        return node.keys.size() < MIN_KEYS && pageNumber != rootPageNumber;
+    }
+
+    private void fixUnderflow(BPlusTreeNode parent, int childIndex) throws IOException {
+        long childPageNum = parent.childPageNumbers.get(childIndex);
+        BPlusTreeNode child = BPlusTreeNode.fromPage(store.readPage((int) childPageNum));
+
+        // Try borrowing from left sibling
+        if (childIndex > 0) {
+            long leftNum = parent.childPageNumbers.get(childIndex - 1);
+            BPlusTreeNode left = BPlusTreeNode.fromPage(store.readPage((int) leftNum));
+            if (left.keys.size() > MIN_KEYS) {
+                borrowFromLeft(parent, childIndex, left, child, leftNum, childPageNum);
+                return;
+            }
+        }
+        // Try borrowing from right sibling
+        if (childIndex < parent.childPageNumbers.size() - 1) {
+            long rightNum = parent.childPageNumbers.get(childIndex + 1);
+            BPlusTreeNode right = BPlusTreeNode.fromPage(store.readPage((int) rightNum));
+            if (right.keys.size() > MIN_KEYS) {
+                borrowFromRight(parent, childIndex, child, right, childPageNum, rightNum);
+                return;
+            }
+        }
+        // Can't borrow from either sibling - must merge
+        if (childIndex > 0) {
+            long leftNum = parent.childPageNumbers.get(childIndex - 1);
+            BPlusTreeNode left = BPlusTreeNode.fromPage(store.readPage((int) leftNum));
+            mergeNodes(parent, childIndex - 1, left, child, leftNum, childPageNum);
+        } else {
+            long rightNum = parent.childPageNumbers.get(childIndex + 1);
+            BPlusTreeNode right = BPlusTreeNode.fromPage(store.readPage((int) rightNum));
+            mergeNodes(parent, childIndex, child, right, childPageNum, rightNum);
+        }
+    }
+
+    private void borrowFromLeft(BPlusTreeNode parent, int childIndex, BPlusTreeNode left, BPlusTreeNode child, long leftNum, long childNum) throws IOException {
+        if (child.isLeaf) {
+            int lastIdx = left.keys.size() - 1;
+            child.keys.add(0, left.keys.remove(lastIdx));
+            child.recordPageNumbers.add(0, left.recordPageNumbers.remove(lastIdx));
+            child.slotIndexes.add(0, left.slotIndexes.remove(lastIdx));
+            parent.keys.set(childIndex - 1, child.keys.get(0));
+        } else {
+            int lastKeyIdx = left.keys.size() - 1;
+            child.keys.add(0, parent.keys.get(childIndex - 1));
+            parent.keys.set(childIndex - 1, left.keys.remove(lastKeyIdx));
+            child.childPageNumbers.add(0, left.childPageNumbers.remove(left.childPageNumbers.size() - 1));
+        }
+        store.writePage((int) leftNum, left.toPage());
+        store.writePage((int) childNum, child.toPage());
+    }
+
+    private void borrowFromRight(BPlusTreeNode parent, int childIndex, BPlusTreeNode child, BPlusTreeNode right, long childNum, long rightNum) throws IOException {
+        if (child.isLeaf) {
+            child.keys.add(right.keys.remove(0));
+            child.recordPageNumbers.add(right.recordPageNumbers.remove(0));
+            child.slotIndexes.add(right.slotIndexes.remove(0));
+            parent.keys.set(childIndex, right.keys.get(0));
+        } else {
+            child.keys.add(parent.keys.get(childIndex));
+            parent.keys.set(childIndex, right.keys.remove(0));
+            child.childPageNumbers.add(right.childPageNumbers.remove(0));
+        }
+        store.writePage((int) childNum, child.toPage());
+        store.writePage((int) rightNum, right.toPage());
+    }
+
+    // Merges 'right' INTO 'left', removing the separator key from parent
+    private void mergeNodes(BPlusTreeNode parent, int leftKeyIndex, BPlusTreeNode left, BPlusTreeNode right, long leftNum, long rightNum) throws IOException {
+        if (left.isLeaf) {
+            left.keys.addAll(right.keys);
+            left.recordPageNumbers.addAll(right.recordPageNumbers);
+            left.slotIndexes.addAll(right.slotIndexes);
+            left.nextLeafPageNumber = right.nextLeafPageNumber;
+        } else {
+            left.keys.add(parent.keys.get(leftKeyIndex));
+            left.keys.addAll(right.keys);
+            left.childPageNumbers.addAll(right.childPageNumbers);
+        }
+        parent.keys.remove(leftKeyIndex);
+        parent.childPageNumbers.remove(leftKeyIndex + 1);
+
+        store.writePage((int) leftNum, left.toPage());
+        // rightNum's page is now orphaned/unused - a real DB would free it via a free-list
+    }
 }

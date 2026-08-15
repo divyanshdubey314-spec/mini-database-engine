@@ -26,23 +26,20 @@ public class Page {
         int recordCount = buffer.getInt(0);
         byte[] recordBytes = record.serialize();
 
-        // Find where the next free byte is: after header (4) + all existing records
         int writeOffset = 4;
         buffer.position(4);
         for (int i = 0; i < recordCount; i++) {
-            int existingId = buffer.getInt();
-            int nameLen = buffer.getInt();
-            buffer.position(buffer.position() + nameLen);
+            Record.deserialize(buffer); // just walks past it correctly, whatever the format is
             writeOffset = buffer.position();
         }
 
         if (writeOffset + recordBytes.length > PAGE_SIZE) {
-            return false; // not enough room in this page
+            return false;
         }
 
         buffer.position(writeOffset);
         buffer.put(recordBytes);
-        buffer.putInt(0, recordCount + 1); // update record count in header
+        buffer.putInt(0, recordCount + 1);
         return true;
     }
 

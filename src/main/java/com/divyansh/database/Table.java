@@ -1,6 +1,7 @@
 package com.divyansh.database;
 
 import java.io.IOException;
+import java.util.List;
 
 public class Table {
 
@@ -8,8 +9,8 @@ public class Table {
     private final PageAllocator allocator;
     private final BPlusTree index;
 
-    // Tracks the current "active" page we're appending records into
     private long currentDataPage = -1;
+    private final List<Long> allDataPages = new java.util.ArrayList<>();
 
     public Table(PageStore store, PageAllocator allocator, BPlusTree index) {
         this.store = store;
@@ -17,16 +18,13 @@ public class Table {
         this.index = index;
     }
 
-    // Inserts a record, indexes it by id, returns nothing - the tree now knows where it lives
     public void insert(Record record) throws IOException {
         Page page;
-        boolean isNewPage = false;
 
         if (currentDataPage == -1) {
-            // No active page yet - allocate the first one
             currentDataPage = allocator.allocatePage();
+            allDataPages.add(currentDataPage);
             page = new Page();
-            isNewPage = true;
         } else {
             page = store.readPage((int) currentDataPage);
         }
@@ -34,28 +32,25 @@ public class Table {
         boolean fit = page.addRecord(record);
 
         if (!fit) {
-            // Current page is full - start a fresh one
             currentDataPage = allocator.allocatePage();
+            allDataPages.add(currentDataPage);
             page = new Page();
             fit = page.addRecord(record);
-            isNewPage = true;
             if (!fit) {
                 throw new IllegalStateException("Record too large to fit in an empty page");
             }
         }
 
-        // The slot index is "how many records were in the page before this one"
         int slotIndex = page.getRecords().size() - 1;
 
         store.writePage((int) currentDataPage, page);
         index.insert(record.getId(), currentDataPage, slotIndex);
     }
 
-    // Looks up a record by id using the B+ Tree index
     public Record find(int id) throws IOException {
         long[] location = index.search(id);
         if (location == null) {
-            return null; // not found
+            return null;
         }
 
         long pageNumber = location[0];
@@ -63,5 +58,39 @@ public class Table {
 
         Page page = store.readPage((int) pageNumber);
         return page.getRecords().get(slotIndex);
+    }
+
+    public List<Record> findAll() throws IOException {
+        List<Record> all = new java.util.ArrayList<>();
+        for (long pageNum : allDataPages) {
+            Page page = store.readPage((int) pageNum);
+            for (Record r : page.getRecords()) {
+                if (!r.isDeleted()) {
+                    all.add(r);
+                }
+            }
+        }
+        return all;
+    }
+    public boolean delete(int id) throws IOException {
+        long[] location = index.search(id);
+        if (location == null) return false;
+
+        long pageNumber = location[0];
+        int slotIndex = (int) location[1];
+
+        Page page = store.readPage((int) pageNumber);
+        java.util.List<Record> records = page.getRecords();
+        records.get(slotIndex).markDeleted();
+
+        // Rewrite the whole page with the updated (now-deleted) record
+        Page newPage = new Page();
+        for (Record r : records) {
+            newPage.addRecord(r);
+        }
+        store.writePage((int) pageNumber, newPage);
+
+        index.delete(id);
+        return true;
     }
 }
