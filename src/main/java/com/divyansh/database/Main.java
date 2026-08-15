@@ -1,32 +1,31 @@
 package com.divyansh.database;
 
 import java.io.IOException;
-import java.nio.charset.StandardCharsets;
 
 public class Main {
     public static void main(String[] args) throws IOException {
         String filePath = "test.db";
 
-        // Step 1: Write a page with some text in it
+        // Step 1: Write multiple records into one page
         try (PageStore store = new PageStore(filePath)) {
             PageAllocator allocator = new PageAllocator(store);
             long pageNum = allocator.allocatePage();
 
             Page page = new Page();
-            byte[] message = ("Hello from page " + pageNum + "!").getBytes(StandardCharsets.UTF_8);            page.getBuffer().put(message);
+            page.addRecord(new Record(1, "Divyansh"));
+            page.addRecord(new Record(2, "Alice"));
+            page.addRecord(new Record(3, "Bob"));
 
             store.writePage((int) pageNum, page);
-            System.out.println("Wrote page " + pageNum + ". Total pages: " + store.getPageCount());
+            System.out.println("Wrote page " + pageNum + " with 3 records. Total pages: " + store.getPageCount());
         }
 
-        // Step 2: Reopen the file and read it back
+        // Step 2: Reopen the file and read all records back
         try (PageStore store = new PageStore(filePath)) {
             Page page = store.readPage(0);
-            byte[] data = page.toBytes();
-
-            // Only print the first 30 bytes as text (rest is empty/zeroed space)
-            String text = new String(data, 0, 30, StandardCharsets.UTF_8).trim();
-            System.out.println("Read back: " + text);
+            for (Record record : page.getRecords()) {
+                System.out.println("Read back: " + record);
+            }
         }
     }
 }
